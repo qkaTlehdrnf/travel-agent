@@ -1,0 +1,26 @@
+name: APK 빌드
+on:
+  push:
+    branches: [main]
+    paths: ['android/**', 'build.sh']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: 빌드 도구
+        run: sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq android-sdk-platform-23 aapt zipalign apksigner dalvik-exchange openjdk-17-jdk-headless
+      - name: 키 준비
+        env: { KS_B64: '${{ secrets.KEYSTORE_B64 }}' }
+        run: echo "$KS_B64" | base64 -d > release.jks
+      - name: 빌드
+        env: { KEYSTORE: release.jks, KS_PASS: '${{ secrets.KEYSTORE_PASS }}' }
+        run: ./build.sh
+      - name: 릴리스
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          V=$(grep -o 'versionName="[^"]*"' android/AndroidManifest.xml | cut -d'"' -f2)
+          gh release create "v$V" build/travel-agent.apk --title "v$V" --notes "자동 빌드" --latest || gh release upload "v$V" build/travel-agent.apk --clobber

@@ -1,0 +1,22 @@
+{
+ "build": 1,
+ "note": "첫 버전",
+ "files": [
+  "app.js",
+  "index.html",
+  "lib/images/layers-2x.png",
+  "lib/images/layers.png",
+  "lib/images/marker-icon-2x.png",
+  "lib/images/marker-icon.png",
+  "lib/images/marker-shadow.png",
+  "lib/leaflet.css",
+  "lib/leaflet.js",
+  "packs.js",
+  "style.css"
+ ],
+ "apk": {
+  "versionCode": 1,
+  "versionName": "0.1.0",
+  "url": "https://github.com/qkaTlehdrnf/travel-agent/releases/latest/download/travel-agent.apk"
+ }
+}

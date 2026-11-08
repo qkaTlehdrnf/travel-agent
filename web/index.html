@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>여행 Agent</title>
+<link rel="stylesheet" href="lib/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header class="status">
+    <div style="min-width:0">
+      <b id="where">여행 Agent</b>
+      <small id="clock" class="num"></small>
+      <small id="nextfix" class="nextfix" hidden></small>
+    </div>
+    <div class="icons">
+      <button class="ibtn" id="reqBtn" aria-label="앱 고쳐 달라고 요청하기"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13 7l4 4"/></svg>요청</button>
+      <button class="ibtn" id="setBtn" aria-label="설정"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg></button>
+    </div>
+  </header>
+  <main class="screen" id="screen"></main>
+  <button class="wcfab" id="wcFab" aria-label="근처 화장실 찾기"><svg viewBox="0 0 24 24"><circle cx="8" cy="5" r="2"/><circle cx="16" cy="5" r="2"/><path d="M8 8v13M6 9h4l1 6M16 8l-3 8h6l-3-8M16 16v5"/></svg>화장실</button>
+  <div class="askwrap">
+    <form class="ask" id="askForm" autocomplete="off">
+      <input id="askInput" placeholder="버튼에 없는 건 여기에 말하기" aria-label="버튼에 없는 건 여기에 말하기">
+      <button type="button" class="ib clr" id="clrBtn" aria-label="입력 지우기" hidden><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
+      <button type="submit" class="ib send" id="sendBtn" aria-label="보내기" hidden><svg viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6"/></svg></button>
+      <button type="button" class="ib mic2" id="micBtn" aria-label="음성으로 말하기"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+    </form>
+  </div>
+  <nav class="dock">
+    <button class="tab" data-tab="home"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>홈</button>
+    <button class="tab" data-tab="move"><svg viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="14" rx="3"/><path d="M5 11h14M8 21l2-4M16 21l-2-4"/></svg>이동</button>
+    <button class="tab" data-tab="inbox"><svg viewBox="0 0 24 24"><path d="M3 13l3-8h12l3 8v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1zM3 13h5l1 3h6l1-3h5"/></svg>할 일<span class="badge num" id="badge" hidden>0</span></button>
+    <button class="tab" data-tab="saved"><svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-12a7 7 0 0 1 14 0c0 5.8-7 12-7 12z"/><circle cx="12" cy="9" r="2.5"/></svg>저장</button>
+  </nav>
+</div>
+<script>window.__BUILD__=1</script>
+<script src="lib/leaflet.js"></script>
+<script src="packs.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
