@@ -12,8 +12,8 @@ const BUILD = window.__BUILD__ || 0;
 /* ---------------- 저장소 ---------------- */
 const KEY = 'ta.v1';
 const DEF = {
-  legs: [], saved: [], done: {}, cache: {}, geo: {}, research: null, reqs: [], seenReq: {},
-  prefs: { repo: 'qkaTlehdrnf/travel-agent', ghToken: '', gkey: '', akey: '', model: 'claude-haiku-5-5', tts: true, homeCC: 'KR', ccOverride: '' },
+  trip: null, notes: [], legs: [], saved: [], done: {}, cache: {}, geo: {}, research: null, reqs: [], seenReq: {},
+  prefs: { repo: 'qkaTlehdrnf/travel-agent', ghToken: '', gkey: '', akey: '', model: 'claude-haiku-5-5', okey: '', omodel: 'gpt-4o-mini', gmkey: '', gmodel: 'gemini-2.5-flash', ckey: '', curl: '', cmodel: '', aiFirst: 'anthropic', tts: true, homeCC: 'KR', ccOverride: '' },
   lastFix: null, apk: null,
 };
 let DB;
@@ -203,12 +203,13 @@ async function search(cat, c, opt) {
 function rank(cat, items, filter) {
   let arr = items.slice();
   if (filter) arr = arr.filter(filter);
+  if (cat === 'food' && DB.trip && DB.trip.avoid) { const kept = arr.filter((i) => !avoidTag(i)); if (kept.length) arr = kept; }
   if (cat === 'food' && arr.some((i) => i.rating)) {
     arr.sort((a, b) => score(b) - score(a));
   } else arr.sort((a, b) => a.d - b.d);
   return arr.slice(0, cat === 'wc' || cat === 'locker' ? 6 : 8);
 }
-function score(i) { return (i.rating || 3.5) * Math.log10(10 + (i.rc || 0)) - i.d / 600 + (i.open && i.open[0] === 'bad' ? -5 : 0); }
+function score(i) { const bud = (DB.trip || {}).budget; const bb = bud === '가성비' && i.tags.includes('가성비') ? 1 : bud === '고급' && (i.tags.includes('고급') || i.tags.includes('파인다이닝')) ? 1 : 0; return bb + (i.rating || 3.5) * Math.log10(10 + (i.rc || 0)) - i.d / 600 + (i.open && i.open[0] === 'bad' ? -5 : 0); }
 
 /* ---------------- 일정(구간) ---------------- */
 function legs() { return DB.legs.slice().sort((a, b) => t(a.dep) - t(b.dep)); }
@@ -226,6 +227,279 @@ function platInfo(l, which) {
   return { p, num, zone: which === 'arr' ? l.arrZone : l.depZone, label: num ? (p.numFirst ? `${num}${p.word}` : `${p.word} ${num}`) : '' };
 }
 const MODE = { train: '기차', bus: '버스', flight: '비행', metro: '지하철', ferry: '배', booking: '예약' };
+
+/* ---------------- 여행 정보(목적·기간·도시·취향) ---------------- */
+const PURPOSES = ['신혼여행', '가족', '친구', '혼자', '출장', '기타'];
+function parseCities(txt, year) {
+  return txt.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
+    const m = l.match(/(\d{1,2})\s*[\/.]\s*(\d{1,2})\s*(?:[-~–]\s*(?:(\d{1,2})\s*[\/.]\s*)?(\d{1,2}))?/);
+    const name = l.replace(/\(?\s*\d{1,2}\s*[\/.]\s*\d{1,2}.*$/, '').replace(/[:,·\-]\s*$/, '').trim() || l;
+    const c = { name, line: l };
+    if (m) {
+      const y = year || new Date().getFullYear();
+      c.from = `${y}-${pad(m[1])}-${pad(m[2])}`;
+      const em = m[3] || m[1]; const ed = m[4] || m[2];
+      c.to = `${+em < +m[1] ? y + 1 : y}-${pad(em)}-${pad(ed)}`;
+    }
+    return c;
+  });
+}
+function today() { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+function tripCity(day) {
+  const tr = DB.trip; if (!tr || !tr.cities) return null;
+  day = day || today();
+  const hits = tr.cities.filter((c) => c.from && c.from <= day && day <= c.to);
+  return hits[hits.length - 1] || null;
+}
+function tripLine() {
+  const tr = DB.trip; if (!tr) return '';
+  const parts = [tr.purpose];
+  if (tr.start && tr.end) {
+    const d0 = new Date(tr.start + 'T00:00'), n = new Date(today() + 'T00:00');
+    const k = Math.round((n - d0) / 86400e3) + 1;
+    const total = Math.round((new Date(tr.end + 'T00:00') - d0) / 86400e3) + 1;
+    parts.push(k < 1 ? `출발 D-${1 - k}` : k > total ? '여행 끝' : `${k}일째 / ${total}일`);
+  }
+  const c = tripCity(); if (c) parts.push('오늘 ' + c.name);
+  return parts.filter(Boolean).join(' · ');
+}
+function avoidTag(i) {
+  const av = ((DB.trip || {}).avoid || '');
+  return (i.tags || []).some((tg) => av.includes(tg));
+}
+function tripCtx() {
+  const tr = DB.trip; if (!tr) return '여행 정보 미입력.';
+  return `여행: ${tr.purpose || ''}${tr.who ? ', 동행 ' + tr.who : ''}, ${tr.start || '?'}~${tr.end || '?'}. 도시 순서: ${(tr.cities || []).map((c) => c.line).join(' / ')}. 좋아함: ${tr.like || '-'}. 피함: ${tr.avoid || '-'}. 예산: ${tr.budget || '-'}. 걷기: ${tr.pace || '-'}. 지난 여행에서 불편했던 점·선호: ${(tr.history || '-').slice(0, 1500)}. 사용자 규칙: ${(tr.rules || []).join(' / ').slice(0, 2500)}. 자유 메모: ${(DB.notes || []).map((n) => n.section + ': ' + n.text).join(' | ').slice(0, 2500)}`;
+}
+/* ---------------- 가져오기: 텍스트/md → 앱 데이터셋 ----------------
+   데이터셋 = 스케줄 형식(trip 기본정보·도시·이동 구간·숙소·규칙) + 형식에 안 맞는 건 자유 메모(notes, 원문 그대로). */
+const DATE_RE = /(?:(20\d{2})[-./]\s*)?(\d{1,2})\s*(?:[\/.]|월)\s*(\d{1,2})\s*일?/;
+const TIME_RE = /\b([01]?\d|2[0-3]):([0-5]\d)\b/g;
+const TRAIN_RE = /\b(ICE|ICN|IC|IR|EC|EN|RJX|RJ|TGV|FR|FA|FB|RV|RE|NJ|Italo|ITA|OUIGO|AVE|KTX|SRT|ITX|S\d+|[A-Z]{2}\s?\d{2,4})\s?(\d{1,5})?\b/;
+const PLAT_RE = /(Gleis|Binario|Voie|Bahnsteig|Spoor|Vía|Platform|Track|플랫폼|승강장|타는\s*곳|게이트|Gate)\s*([A-Z]?\d{1,3}[A-Z]?)|(\d{1,2})\s*번\s*(?:승강장|플랫폼|홈)/i;
+function ymd(y, m, d) { return `${y}-${pad(m)}-${pad(d)}`; }
+function importText(raw) {
+  const out = { trip: { purpose: '', who: '', start: '', end: '', cities: [], lodging: '', like: '', avoid: '', budget: '', pace: '', rules: [], title: '' }, legs: [], notes: [], stats: {} };
+  const lines = raw.replace(/\r/g, '').split('\n');
+  const yearHint = (raw.match(/\b(20\d{2})[-./]\d{1,2}/) || [])[1] || String(new Date().getFullYear());
+  let curDate = '', section = '', noteBuf = [], inRules = false;
+  const flushNote = () => { const tx = noteBuf.join('\n').trim(); if (tx) out.notes.push({ section: section || '메모', text: tx }); noteBuf = []; };
+  const T = out.trip;
+  // 기간·목적·동행: 앞부분에서 "2026-10-23 ~ 11-07 유럽 신혼여행 (A·B)" 같은 줄
+  const head = lines.slice(0, 15).join('\n');
+  const pm = head.match(/(20\d{2})[-./](\d{1,2})[-./](\d{1,2})\s*[~–-]\s*(?:(20\d{2})[-./])?(\d{1,2})[-./](\d{1,2})/);
+  if (pm) { T.start = ymd(pm[1], pm[2], pm[3]); T.end = ymd(pm[4] || pm[1], pm[5], pm[6]); }
+  const pur = head.match(/신혼여행|가족\s*여행|출장|혼자|친구/); if (pur) T.purpose = pur[0].replace(/\s/g, '') === '가족여행' ? '가족' : pur[0];
+  const who = head.match(/\(([^)]*[·,&][^)]*)\)/); if (who) T.who = who[1];
+  const tl = lines.find((l) => /^#\s/.test(l)); if (tl) T.title = tl.replace(/^#\s*/, '').trim();
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i]; const tx = l.replace(/^\s*(?:[-*+]|\d+\.)\s+/, '').trim();
+    if (/^#{1,6}\s/.test(l)) {
+      flushNote(); section = l.replace(/^#+\s*/, '').trim();
+      inRules = /원칙|규칙|요청|rule/i.test(section);
+      const dm = section.match(DATE_RE); if (dm) curDate = ymd(dm[1] || yearHint, dm[2], dm[3]);
+      // "## Zürich 11/8-11/9" 형식의 도시 헤더
+      const cm = section.match(/^(.+?)\s+\(?(\d{1,2})[\/.](\d{1,2})\s*[-~–]\s*(?:(\d{1,2})[\/.])?(\d{1,2})\)?$/);
+      if (cm && !/[—:]/.test(cm[1])) T.cities.push(...parseCities(`${cm[1]} ${cm[2]}/${cm[3]}-${cm[4] || cm[2]}/${cm[5]}`, +yearHint));
+      continue;
+    }
+    if (!tx || /^-{3,}$/.test(tx) || (/^_.*_$/.test(tx) && i < 8)) continue;
+    // 규칙
+    const rm = tx.match(/^(?:이후\s*)?규칙\s*[:：]\s*(.+)$/);
+    if (rm) { T.rules.push(rm[1].trim()); continue; }
+    if (inRules && /^\s*[-*+]/.test(l)) { T.rules.push(tx); if (/^음식\s*[:：]/.test(tx)) { T.like = tx.replace(/^음식\s*[:：]\s*/, ''); if (/가성비/.test(tx)) T.budget = '가성비'; } continue; }
+    // 날짜 줄 (본문)
+    const dm = tx.match(/^(?:(20\d{2})[-./])?(\d{1,2})[\/.](\d{1,2})\b/); if (dm) curDate = ymd(dm[1] || yearHint, dm[2], dm[3]);
+    // 도시 줄: "Zürich 11/8-11/9"
+    if (/^[^\d:]{2,40}\s+\(?\d{1,2}[\/.]\d{1,2}\s*[-~–]\s*(\d{1,2}[\/.])?\d{1,2}\)?$/.test(tx)) { T.cities.push(...parseCities(tx, +yearHint)); continue; }
+    // 숙소
+    if (/(호텔|Hotel|숙소|Airbnb|에어비앤비|호스텔|Hostel|B&B|체크인)/i.test(tx) && !TIME_RE.test(tx.replace(/체크인\s*\d/, ''))) { TIME_RE.lastIndex = 0; T.lodging += (T.lodging ? '\n' : '') + tx.replace(/^(숙소|호텔)\s*[:：]\s*/, ''); continue; }
+    TIME_RE.lastIndex = 0;
+    // 이동 구간: 시각 2개 + 화살표/출발·도착
+    const times = [...tx.matchAll(TIME_RE)].map((m) => `${pad(m[1])}:${m[2]}`);
+    const arrow = tx.split(/\s*(?:→|->|⇒|➜|=>)\s*/);
+    if (times.length >= 1 && arrow.length >= 2 && curDate) {
+      const clean = (x) => x.replace(TIME_RE, '').replace(PLAT_RE, '').replace(TRAIN_RE, '').replace(/[()\[\]·,]/g, ' ').replace(/(출발|도착|발|착|탑승)/g, '').replace(/\s+/g, ' ').trim();
+      const tr = tx.match(TRAIN_RE); const plats = [...arrow[0].matchAll(new RegExp(PLAT_RE.source, 'gi'))]; const plats2 = [...arrow[arrow.length - 1].matchAll(new RegExp(PLAT_RE.source, 'gi'))];
+      const cls = (tx.match(/([12])\s*등석|([12])(?:st|nd)\s*class/i) || []);
+      const zone = (tx.match(/([A-F])\s*구역|Sektor\s*([A-F])|zone\s*([A-F])/i) || []);
+      const lg = { id: 'imp' + hash(curDate + tx) + i, mode: /비행|flight|게이트|gate|\b[A-Z]{2}\s?\d{3,4}\b.*공항|airport/i.test(tx) ? 'flight' : /버스|bus|flixbus/i.test(tx) ? 'bus' : /페리|ferry|배\b/i.test(tx) ? 'ferry' : 'train',
+        no: tr ? tr[0].trim() : '', from: clean(arrow[0].split(/\s[·|]\s|,\s/).pop()), to: clean(arrow[arrow.length - 1].split(/\s[·|]\s|,\s/)[0]),
+        dep: `${curDate}T${times[0]}`, arr: times[1] ? `${curDate}T${times[1]}` : '',
+        depPlat: plats[0] ? (plats[0][2] || plats[0][3]) : '', arrPlat: plats2[0] ? (plats2[0][2] || plats2[0][3]) : '',
+        depZone: (zone[1] || zone[2] || zone[3] || '').toUpperCase(), cls: cls[0] ? `${cls[1] || cls[2]}등석` : '',
+        ticket: (tx.match(/(Saver\s*Day\s*Pass|Day\s*Pass|Eurail|Interrail|Swiss\s*Travel\s*Pass|패스)/i) || [])[0] || '',
+        note: (tx.match(/(?:주의|note)\s*[:：]\s*(.+)$/i) || [])[1] || '', region: 'de', src: tx };
+      if (lg.arr && lg.arr < lg.dep) { const d = new Date(curDate + 'T00:00'); d.setDate(d.getDate() + 1); lg.arr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${times[1]}`; }
+      if (lg.from && lg.to) { out.legs.push(lg); continue; }
+    }
+    // 예약(시각 1개 + 예약/투어/식당 키워드)
+    if (times.length === 1 && curDate && /(예약|투어|입장|식당|레스토랑|공연|tour|booking|reservation)/i.test(tx)) {
+      out.legs.push({ id: 'imp' + hash(curDate + tx) + i, mode: 'booking', no: tx.replace(TIME_RE, '').replace(/^\s*[-–:]\s*/, '').trim().slice(0, 60), from: '', dep: `${curDate}T${times[0]}`, arr: '', note: '', src: tx });
+      continue;
+    }
+    noteBuf.push(l);
+  }
+  flushNote();
+  if (!T.start && T.cities.length) { T.start = T.cities[0].from || ''; T.end = T.cities[T.cities.length - 1].to || ''; }
+  out.stats = { legs: out.legs.filter((x) => x.mode !== 'booking').length, bookings: out.legs.filter((x) => x.mode === 'booking').length, cities: T.cities.length, lodging: T.lodging ? T.lodging.split('\n').length : 0, rules: T.rules.length, notes: out.notes.length };
+  return out;
+}
+/** 앱 데이터 → md (다시 가져오면 같은 데이터가 됨) */
+function exportMd() {
+  const tr = DB.trip || {}; const L = legs();
+  const d = (s) => s ? `${+s.slice(5, 7)}/${+s.slice(8, 10)}` : '';
+  let md = `# ${tr.title || '여행 계획'}\n\n_${tr.start || ''} ~ ${tr.end || ''} ${tr.purpose || ''}${tr.who ? ` (${tr.who})` : ''}_\n\n`;
+  if ((tr.cities || []).length) md += `## 도시\n${tr.cities.map((c) => `- ${c.name} ${d(c.from)}-${d(c.to)}`).join('\n')}\n\n`;
+  if (tr.lodging) md += `## 숙소\n${tr.lodging.split('\n').map((x) => `- 숙소: ${x}`).join('\n')}\n\n`;
+  let day = '';
+  if (L.length) {
+    md += `## 일정\n`;
+    for (const l of L) {
+      const dd = l.dep.slice(0, 10); if (dd !== day) { md += `\n### ${d(dd)}\n`; day = dd; }
+      if (l.mode === 'booking') { md += `- ${l.dep.slice(11, 16)} 예약 ${l.no}${l.note ? ' · 주의: ' + l.note : ''}\n`; continue; }
+      md += `- ${l.no ? l.no + ' ' : ''}${l.from}${l.depPlat ? ` (승강장 ${l.depPlat})` : ''} ${l.dep.slice(11, 16)} → ${l.to}${l.arrPlat ? ` (승강장 ${l.arrPlat})` : ''} ${l.arr ? l.arr.slice(11, 16) : ''}${l.depZone ? ` · ${l.depZone} 구역` : ''}${l.cls ? ' · ' + l.cls : ''}${l.ticket ? ' · ' + l.ticket : ''}${l.note ? ' · 주의: ' + l.note : ''}\n`;
+    }
+    md += '\n';
+  }
+  if (tr.like || tr.avoid || tr.budget || tr.pace) md += `## 취향\n- 좋아함: ${tr.like || '-'}\n- 피함: ${tr.avoid || '-'}\n- 예산: ${tr.budget || '-'}\n- 걷기: ${tr.pace || '-'}\n\n`;
+  if ((tr.rules || []).length) md += `## 규칙\n${tr.rules.map((r) => `- ${r}`).join('\n')}\n\n`;
+  for (const n of DB.notes || []) md += `## ${n.section}\n${n.text}\n\n`;
+  return md.trim() + '\n';
+}
+function importSheet(first) {
+  const sh = sheet(first ? '여행 계획부터 넣어 주세요' : '여행 계획 가져오기', `
+   ${first ? '<div class="card"><b>텍스트나 md 파일로 한 번에 넣어요.</b><div class="src">노션·메모장에 쓴 계획을 그대로 올리면 일정(이동·숙소·도시)은 앱 형식으로 바꾸고, 형식에 안 맞는 내용은 자유 메모로 원문 그대로 보관해요.</div></div>' : ''}
+   <div class="card" style="display:flex;flex-direction:column;gap:8px">
+    <button class="btn pri full" id="i_file">파일 고르기 (.md / .txt)</button>
+    <input type="file" id="i_input" accept=".md,.txt,.markdown,text/plain,text/markdown" hidden>
+    <label class="f">또는 붙여넣기<textarea id="i_text" placeholder="# 스위스·이탈리아 신혼여행&#10;_2026-11-08 ~ 11-20 신혼여행 (원중·홍우)_&#10;&#10;## 도시&#10;- Zürich 11/8-11/9&#10;- Interlaken 11/9-11/11&#10;&#10;### 11/9&#10;- IC 8 Zürich HB (Gleis 31) 12:56 → Bern (Gleis 7) 13:58 · 2등석 · Saver Day Pass&#10;- IC 61 Bern (Gleis 4) 14:04 → Interlaken Ost 14:56 · B 구역 · 주의: Interlaken West에서 내리지 말 것&#10;- 숙소: Hotel Alpenblick Interlaken"></textarea></label>
+    <button class="btn full" id="i_parse">변환해서 미리 보기</button>
+    ${hasAI() ? '<label class="tg"><span class="src">형식이 제각각이면 AI로 더 정확히 변환 (느림)</span><input type="checkbox" id="i_llm" style="width:auto"></label>' : ''}
+   </div>
+   <div id="i_prev"></div>
+   <div class="grid2"><button class="btn line" id="i_form">직접 입력</button><button class="btn line" id="i_skip">${first ? '나중에' : '닫기'}</button></div>`);
+  const prev = $('#i_prev', sh);
+  $('#i_file', sh).onclick = () => $('#i_input', sh).click();
+  $('#i_input', sh).onchange = (e) => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { $('#i_text', sh).value = r.result; run(); }; r.readAsText(f, 'utf-8'); };
+  $('#i_form', sh).onclick = () => { sh.remove(); tripSheet(first); };
+  $('#i_skip', sh).onclick = () => { if (first && !DB.trip) { DB.trip = { skipped: true }; save(); render(); } sh.remove(); };
+  async function run() {
+    const raw = $('#i_text', sh).value; if (!raw.trim()) return toast('내용이 없어요');
+    let res = importText(raw);
+    const llm = $('#i_llm', sh);
+    if (llm && llm.checked) {
+      prev.innerHTML = '<div class="card"><div class="skel"></div><div class="src" style="margin-top:6px">AI가 변환 중…</div></div>';
+      try {
+        const o = await claude(`아래 여행 텍스트를 이 JSON 하나로만 변환해. {"trip":{"title","purpose","who","start","end"(YYYY-MM-DD),"cities":[{"name","from","to","line"}],"lodging"(줄바꿈 구분),"like","avoid","budget"(가성비|보통|고급),"pace","rules":[문자열]},"legs":[{"mode"(train|bus|flight|metro|ferry|booking),"no","from","to","dep","arr"(YYYY-MM-DDTHH:MM 현지),"depPlat","depZone","arrPlat","cls","ticket","note","cc"}],"notes":[{"section","text"}]}. 스케줄 형식에 안 맞는 내용은 빠짐없이 notes에 원문 그대로. 없는 값은 빈 문자열, 추측 금지.\n\n${raw}`, { json: true });
+        const j = JSON.parse(o.match(/\{[\s\S]*\}/)[0]);
+        j.legs = (j.legs || []).map((x, i) => Object.assign({ id: 'imp' + hash(JSON.stringify(x)) + i, region: 'de' }, x));
+        j.stats = { legs: j.legs.filter((x) => x.mode !== 'booking').length, bookings: j.legs.filter((x) => x.mode === 'booking').length, cities: (j.trip.cities || []).length, lodging: j.trip.lodging ? j.trip.lodging.split('\n').length : 0, rules: (j.trip.rules || []).length, notes: (j.notes || []).length };
+        res = j;
+      } catch (e) { toast('AI 변환 실패, 기본 변환으로 보여줘요: ' + e.message, 5000); }
+    }
+    showPreview(res, raw);
+  }
+  $('#i_parse', sh).onclick = run;
+  function showPreview(res, raw) {
+    const T = res.trip, st = res.stats;
+    prev.innerHTML = `<div class="card" style="display:flex;flex-direction:column;gap:8px">
+      <div class="h"><b>변환 결과</b><span class="src">저장 전 미리 보기</span></div>
+      <dl class="kvt"><dt>여행</dt><dd>${esc([T.title, T.purpose, T.who].filter(Boolean).join(' · ') || '-')}</dd><dt>기간</dt><dd>${esc(T.start || '?')} ~ ${esc(T.end || '?')}</dd>
+      <dt>도시</dt><dd>${st.cities}곳 ${esc((T.cities || []).map((c) => c.name).join(' → '))}</dd><dt>이동</dt><dd>${st.legs}건</dd><dt>예약</dt><dd>${st.bookings}건</dd><dt>숙소</dt><dd>${st.lodging}곳</dd><dt>규칙</dt><dd>${st.rules}개</dd><dt>자유 메모</dt><dd>${st.notes}묶음 (원문 보관)</dd></dl>
+      ${res.legs.length ? `<div class="src" style="font-weight:600">이동·예약</div>${res.legs.slice(0, 30).map((l) => `<div class="src" style="color:var(--ink)">${esc(l.dep.replace('T', ' '))} ${l.mode === 'booking' ? '예약 ' + esc(l.no) : `${esc(l.no)} ${esc(l.from)}${l.depPlat ? ' [' + esc(l.depPlat) + ']' : ''} → ${esc(l.to)} ${esc((l.arr || '').slice(11))}${l.cls ? ' · ' + esc(l.cls) : ''}`}</div>`).join('')}` : '<div class="note warn">이동 구간을 못 찾았어요. "12:56 Zürich HB → Bern 13:58"처럼 시각과 화살표가 한 줄에 있으면 인식해요.</div>'}
+      ${(T.rules || []).length ? `<div class="src" style="font-weight:600">규칙 (앱·Claude가 지킬 것)</div>${T.rules.slice(0, 8).map((r) => `<div class="src" style="color:var(--ink)">· ${esc(r)}</div>`).join('')}${T.rules.length > 8 ? `<div class="src">외 ${T.rules.length - 8}개</div>` : ''}` : ''}
+      <label class="tg"><span class="src">기존 이동 일정은 지우고 이걸로 바꾸기</span><input type="checkbox" id="i_replace" style="width:auto" ${DB.legs.length ? '' : 'checked'}></label>
+      <button class="btn pri full" id="i_save">이대로 저장</button></div>`;
+    $('#i_save', prev).onclick = async () => {
+      const old = DB.trip && !DB.trip.skipped ? DB.trip : {};
+      const merged = Object.assign({}, old);
+      for (const k of Object.keys(T)) { const v = T[k]; if (Array.isArray(v) ? v.length : v) merged[k] = v; }
+      merged.at = Date.now(); merged.source = raw.slice(0, 20000);
+      DB.trip = merged;
+      DB.notes = (res.notes || []).concat($('#i_replace', prev).checked ? [] : (DB.notes || [])).slice(0, 200);
+      if ($('#i_replace', prev).checked) DB.legs = [];
+      save(); sh.remove(); go('home'); toast('여행 계획을 저장했어요');
+      for (const l of res.legs) await upsertLeg(l);
+      for (const line of (merged.lodging || '').split('\n').map((x) => x.trim()).filter(Boolean)) {
+        if (DB.saved.some((x) => x.tag === '숙소' && x.name === line)) continue;
+        const geo = await geocode(line); if (geo) DB.saved.unshift({ id: 'lodg' + hash(line), name: line, lat: geo.lat, lon: geo.lon, tag: '숙소', at: Date.now() });
+      }
+      for (const c of merged.cities || []) if (!c.geo) { const geo = await geocode(c.name); if (geo) c.geo = geo; }
+      save(); render(); research(true);
+    };
+  }
+  window.__importSheet = { el: sh, setText: (t) => { $('#i_text', sh).value = t; run(); } };
+}
+window.onImportText = (t) => { if (!$('#i_text')) importSheet(false); window.__importSheet.setText(t); };
+function notesView() {
+  const ns = DB.notes || [];
+  const sh = sheet('여행 데이터', `
+   <div class="card" style="display:flex;flex-direction:column;gap:8px"><b>md로 내보내기</b><div class="src">일정·숙소·취향·규칙·자유 메모를 md 한 파일로 받아요. 고친 뒤 다시 가져오면 그대로 반영돼요.</div>
+    <div class="grid2"><button class="btn pri" id="n_dl">파일로 저장</button><button class="btn" id="n_share">공유/복사</button></div>
+    <button class="btn line" id="n_imp">다른 파일 가져오기</button></div>
+   ${(DB.trip && DB.trip.rules || []).length ? `<div class="card"><div class="h"><h2>규칙</h2><span class="src">${DB.trip.rules.length}개</span></div>${DB.trip.rules.map((r) => `<div style="font-size:13.5px;margin-top:4px">· ${esc(r)}</div>`).join('')}</div>` : ''}
+   <div class="card"><div class="h"><h2>자유 메모</h2><span class="src">형식에 안 맞아 원문 그대로 보관</span></div>
+    ${ns.length ? ns.map((n, i) => `<div class="req"><b style="font-size:13.5px">${esc(n.section)}</b><p class="src" style="color:var(--ink)">${esc(n.text)}</p><button class="btn line sm" data-delnote="${i}" style="align-self:flex-start">삭제</button></div>`).join('') : '<div class="empty">없어요</div>'}
+    <label class="f" style="margin-top:8px">메모 추가 (아무 형식이나)<textarea id="n_new" style="min-height:70px" placeholder="예: 아내는 단 거 좋아함. 11/12 밀라노 쇼핑은 마지막 날로."></textarea></label><button class="btn" id="n_add" style="margin-top:6px">추가</button></div>`);
+  const md = () => exportMd();
+  $('#n_dl', sh).onclick = () => { const name = `travel-plan-${today()}.md`; if (A) { const r = A.saveDownload(name, md(), 'text/markdown'); toast(r === 'ok' ? 'Download 폴더에 저장했어요' : r); } else { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([md()], { type: 'text/markdown' })); a.download = name; a.click(); } };
+  $('#n_share', sh).onclick = () => { if (A) A.share(md()); else navigator.clipboard.writeText(md()).then(() => toast('복사했어요')); };
+  $('#n_imp', sh).onclick = () => { sh.remove(); importSheet(false); };
+  $('#n_add', sh).onclick = () => { const tx = $('#n_new', sh).value.trim(); if (!tx) return; DB.notes = DB.notes || []; DB.notes.unshift({ section: '메모 ' + new Date().toLocaleDateString('ko-KR'), text: tx }); save(); sh.remove(); notesView(); };
+  $$('[data-delnote]', sh).forEach((b) => (b.onclick = () => { DB.notes.splice(+b.dataset.delnote, 1); save(); sh.remove(); notesView(); }));
+}
+
+function tripSheet(first) {
+  const tr = DB.trip || { purpose: '', budget: '보통', pace: '보통' };
+  const v = (k) => esc(tr[k] || '');
+  const sh = sheet(first ? '여행 정보부터 알려 주세요' : '여행 정보', `
+   ${first ? '<div class="card"><b>처음 한 번만 적으면 돼요.</b><div class="src">목적·기간·도시·취향을 알면 맛집 순서, 미리 조사할 도시, 다음 할 일을 여기에 맞춰요. 나중에 설정에서 고칠 수 있어요.</div></div>' : ''}
+   <div class="card" style="display:flex;flex-direction:column;gap:10px">
+    <label class="f">여행 목적<div class="seg" id="t_pur">${PURPOSES.map((x) => `<button type="button" data-v="${x}" aria-pressed="${tr.purpose === x}">${x}</button>`).join('')}</div></label>
+    <label class="f">누구와 (예: 아내, 부모님 2명)<input id="t_who" value="${v('who')}"></label>
+    <div class="grid2"><label class="f">출발일<input id="t_start" type="date" value="${v('start')}"></label><label class="f">귀국일<input id="t_end" type="date" value="${v('end')}"></label></div>
+    <label class="f">도시 순서 (한 줄에 하나, 날짜 같이)<textarea id="t_cities" placeholder="Zürich 11/8-11/9&#10;Interlaken 11/9-11/11&#10;Milano 11/11-11/13">${esc((tr.cities || []).map((c) => c.line).join('\n'))}</textarea></label>
+    <label class="f">숙소 (한 줄에 하나, 주소나 이름) — 길찾기 첫 목적지로 저장돼요<textarea id="t_lodg" style="min-height:70px" placeholder="Hotel Alpenblick Interlaken">${v('lodging')}</textarea></label>
+   </div>
+   <div class="card" style="display:flex;flex-direction:column;gap:10px"><b>취향</b>
+    <label class="f">좋아하는 것 (음식·분위기·활동)<input id="t_like" value="${v('like')}" placeholder="현지식, 와인, 전망 좋은 곳"></label>
+    <label class="f">피하는 것 — 이 단어가 붙은 곳은 결과에서 빼요<input id="t_avoid" value="${v('avoid')}" placeholder="한식, 패스트푸드"></label>
+    <label class="f">예산<div class="seg" id="t_bud">${['가성비', '보통', '고급'].map((x) => `<button type="button" data-v="${x}" aria-pressed="${tr.budget === x}">${x}</button>`).join('')}</div></label>
+    <label class="f">걷기<div class="seg" id="t_pace">${['적게', '보통', '많이'].map((x) => `<button type="button" data-v="${x}" aria-pressed="${tr.pace === x}">${x}</button>`).join('')}</div></label>
+   </div>
+   <div class="card" style="display:flex;flex-direction:column;gap:10px"><b>여행 기록 (선택)</b>
+    <label class="f">지난 여행에서 불편했던 점·꼭 지켜 줬으면 하는 것<textarea id="t_hist" placeholder="예: 환승 시간·승강장 꼭 따로 알려줘. 아침엔 늦게 시작.">${v('history')}</textarea></label>
+    ${hasAI() ? '<label class="f">예약 메일·일정표 붙여넣기 — AI가 이동 구간으로 나눠 넣어요<textarea id="t_book" placeholder="항공권·기차 예약 메일 내용을 그대로 붙여넣기"></textarea></label>' : '<div class="src">설정에 AI API 키를 넣으면 예약 메일을 붙여넣어 이동 구간을 자동으로 만들 수 있어요. 지금은 이동 탭에서 직접 추가해 주세요.</div>'}
+   </div>
+   <div class="grid2"><button class="btn pri" id="t_save">저장하고 시작</button><button class="btn line" id="t_skip">${first ? '나중에' : '취소'}</button></div>`);
+  const pick = (id) => { let val = null; $$(`#${id} button`, sh).forEach((b) => { if (b.getAttribute('aria-pressed') === 'true') val = b.dataset.v; b.onclick = () => $$(`#${id} button`, sh).forEach((x) => x.setAttribute('aria-pressed', x === b)); }); return () => { const on = $(`#${id} button[aria-pressed="true"]`, sh); return on ? on.dataset.v : ''; }; };
+  const gPur = pick('t_pur'), gBud = pick('t_bud'), gPace = pick('t_pace');
+  $('#t_skip', sh).onclick = () => { if (first && !DB.trip) { DB.trip = { skipped: true }; save(); } sh.remove(); };
+  $('#t_save', sh).onclick = async () => {
+    const g = (id) => ($('#' + id, sh) || { value: '' }).value.trim();
+    const start = g('t_start');
+    const n = { purpose: gPur(), who: g('t_who'), start, end: g('t_end'), cities: parseCities(g('t_cities'), start ? +start.slice(0, 4) : 0), lodging: g('t_lodg'), like: g('t_like'), avoid: g('t_avoid'), budget: gBud(), pace: gPace(), history: g('t_hist'), at: Date.now() };
+    const book = g('t_book');
+    DB.trip = n; save(); sh.remove(); render(); toast('여행 정보를 저장했어요');
+    for (const line of n.lodging.split('\n').map((x) => x.trim()).filter(Boolean)) {
+      if (DB.saved.some((x) => x.tag === '숙소' && x.name === line)) continue;
+      const geo = await geocode(line); if (geo) DB.saved.unshift({ id: 'lodg' + hash(line), name: line, lat: geo.lat, lon: geo.lon, tag: '숙소', at: Date.now() });
+    }
+    for (const c of n.cities) { const geo = await geocode(c.name); if (geo) { c.geo = geo; } }
+    save();
+    if (book) {
+      toast('예약 내용을 이동 구간으로 나누는 중…', 4000);
+      try {
+        const out = await claude(`아래 예약 메일·일정 텍스트를 구간 JSON 배열로만 답해. 필드: mode(train|bus|flight|metro|ferry|booking), no, from, to, dep, arr(YYYY-MM-DDTHH:MM 현지 시각, 연도 모르면 ${start ? start.slice(0, 4) : new Date().getFullYear()}), depPlat, depZone, arrPlat, cls, ticket, note, cc(ISO 국가코드). 텍스트에 없는 값은 빈 문자열. 추측 금지.\n\n${book}`, { json: true });
+        const arr = JSON.parse(out.match(/\[[\s\S]*\]/)[0]);
+        arr.forEach((x, i) => upsertLeg(Object.assign({ id: 'l' + Date.now() + i, region: 'de' }, x)));
+        toast(`이동 ${arr.length}건을 추가했어요. 이동 탭에서 확인해 주세요`, 4000);
+      } catch (e) { toast('예약 내용 나누기 실패: ' + e.message, 5000); }
+    }
+    research(true);
+  };
+}
 
 /* ---------------- 헤더 ---------------- */
 function header() {
@@ -281,7 +555,10 @@ function home() {
   }
   const r = DB.research;
   const pend = pendingCount();
+  const tl = tripLine();
+  const tripCard = DB.trip && !DB.trip.skipped ? `<div class="card h" style="align-items:center;padding:10px 12px"><div style="min-width:0"><div class="src">이번 여행</div><b style="font-size:14px">${esc(tl || '여행 정보')}</b></div><span style="display:flex;gap:4px"><button class="btn line sm" data-notes>데이터</button><button class="btn line sm" data-trip>수정</button></span></div>` : `<div class="card h" style="align-items:center;border-color:var(--accent)"><div><b>여행 계획을 넣어 주세요</b><div class="src">텍스트·md 파일을 올리면 일정으로 바꿔요</div></div><button class="btn pri sm" data-import>가져오기</button></div>`;
   return `${now}
+  ${tripCard}
   <div class="h"><h2>원탭 찾기</h2><span class="src">${S.city ? esc(S.city) + ' · ' : ''}${esc(P.mapName(S.cc))}로 안내</span></div>
   <div class="quick">${['food', 'sight', 'route', 'locker'].map((k) => `<button class="q" data-q="${k}"><svg viewBox="0 0 24 24">${ICON[k]}</svg>${k === 'route' ? '길찾기' : CATS[k].label}</button>`).join('')}</div>
   <div id="nudge"></div>
@@ -385,7 +662,7 @@ function moveView() {
   const up = L.filter((l) => t(l.arr || l.dep) > now - 3600e3);
   const past = L.length - up.length;
   let html = `<div class="h"><h2>이동·예약</h2><button class="btn pri sm" data-addleg>추가</button></div>`;
-  if (!up.length) html += `<div class="card empty">앞으로의 일정이 없어요. "추가"로 기차·버스·비행·예약을 넣어 주세요.${DB.prefs.akey ? ' 예약 메일·시간표 텍스트를 붙여넣으면 자동으로 나눠 드려요.' : ''}</div>`;
+  if (!up.length) html += `<div class="card empty">앞으로의 일정이 없어요. "추가"로 기차·버스·비행·예약을 넣어 주세요.${hasAI() ? ' 예약 메일·시간표 텍스트를 붙여넣으면 자동으로 나눠 드려요.' : ''}</div>`;
   let day = '';
   up.forEach((l, i) => {
     const d = new Date(l.dep).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' });
@@ -413,7 +690,7 @@ function legForm(l) {
   l = l || { id: 'l' + Date.now(), mode: 'train', cc: S.cc || '', region: 'de' };
   const v = (k) => esc(l[k] || '');
   const sh = sheet(l.from ? '일정 수정' : '일정 추가', `
-   ${DB.prefs.akey && !l.from ? `<div class="card"><label class="f">예약 메일·시간표 붙여넣기 (Claude가 구간으로 나눠요)<textarea id="paste" placeholder="예: 11/9 Zürich HB 12:56 IC 8 Gleis 31 → Bern 13:58 Gleis 7, 14:04 IC 61 Gleis 4 → Interlaken Ost 14:56, 2등석"></textarea></label><button class="btn pri full" id="parseBtn" style="margin-top:8px">자동으로 나누기</button></div>` : ''}
+   ${hasAI() && !l.from ? `<div class="card"><label class="f">예약 메일·시간표 붙여넣기 (AI가 구간으로 나눠요)<textarea id="paste" placeholder="예: 11/9 Zürich HB 12:56 IC 8 Gleis 31 → Bern 13:58 Gleis 7, 14:04 IC 61 Gleis 4 → Interlaken Ost 14:56, 2등석"></textarea></label><button class="btn pri full" id="parseBtn" style="margin-top:8px">자동으로 나누기</button></div>` : ''}
    <div class="card" style="display:flex;flex-direction:column;gap:10px">
     <div class="seg" id="modeSeg">${Object.keys(MODE).map((m) => `<button type="button" data-m="${m}" aria-pressed="${l.mode === m}">${MODE[m]}</button>`).join('')}</div>
     <label class="f">번호·이름 (예: IC 61, 식당 이름)<input id="f_no" value="${v('no')}"></label>
@@ -440,7 +717,7 @@ function legForm(l) {
   const pb = $('#parseBtn', sh);
   if (pb) pb.onclick = async () => {
     const txt = $('#paste', sh).value.trim(); if (!txt) return;
-    pb.disabled = true; pb.textContent = 'Claude가 나누는 중…';
+    pb.disabled = true; pb.textContent = 'AI가 나누는 중…';
     try {
       const out = await claude(`아래 여행 일정 텍스트를 구간 JSON 배열로만 답해. 필드: mode(train|bus|flight|metro|ferry|booking), no, from, to, dep, arr(YYYY-MM-DDTHH:MM 현지 시각, 연도 모르면 ${new Date().getFullYear()}), depPlat, depZone, arrPlat, cls, ticket, note, cc(ISO 국가코드). 텍스트에 없는 값은 빈 문자열. 추측 금지.\n\n${txt}`, { json: true });
       const arr = JSON.parse(out.match(/\[[\s\S]*\]/)[0]);
@@ -590,6 +867,8 @@ async function research(manual) {
   try {
     const targets = [];
     const here = await locate(300000); if (here) targets.push({ name: S.city || '현재 위치', g: here });
+    const tmr = new Date(Date.now() + 86400e3); const tday = `${tmr.getFullYear()}-${pad(tmr.getMonth() + 1)}-${pad(tmr.getDate())}`;
+    for (const c of [tripCity(), tripCity(tday)].filter(Boolean)) { if (!c.geo) c.geo = await geocode(c.name); if (c.geo) targets.push({ name: c.name, g: c.geo }); }
     for (const l of legs().filter((x) => t(x.dep) > n - 3600e3 && t(x.dep) - n < 48 * 3600e3)) {
       if (!l.toGeo || !l.fromGeo) await upsertLeg(l);
       if (l.toGeo) targets.push({ name: l.to, g: l.toGeo, leg: l });
@@ -697,18 +976,37 @@ function settingsSheet() {
    </div>
    <div class="card" style="display:flex;flex-direction:column;gap:10px"><b>연결 (선택)</b>
     <label class="f">Google Places API 키 — 맛집 구글 평점·리뷰 수·영업 중 표시<input id="s_gkey" value="${esc(p.gkey)}" placeholder="AIza…" autocomplete="off"></label>
-    <label class="f">Anthropic API 키 — 버튼에 없는 질문, 일정 텍스트 자동 정리<input id="s_akey" value="${esc(p.akey)}" placeholder="sk-ant-…" autocomplete="off"></label>
-    <label class="f">Claude 모델<input id="s_model" value="${esc(p.model)}"></label>
+    <div style="border-top:1px solid var(--line);padding-top:8px"><b style="font-size:14px">외부 AI API</b><div class="src">버튼에 없는 질문, 예약 메일·계획 변환에 써요. 하나만 넣어도 되고, 여러 개 넣으면 먼저 쓸 AI가 실패할 때 다음 AI로 자동으로 넘어가요.</div></div>
+    <label class="f">먼저 쓸 AI<select id="s_first">${Object.keys(AIS).map((k) => `<option value="${k}" ${p.aiFirst === k ? 'selected' : ''}>${AIS[k].name}</option>`).join('')}</select></label>
+    <div class="grid2"><label class="f">Claude (Anthropic) 키<input id="s_akey" value="${esc(p.akey)}" placeholder="sk-ant-…" autocomplete="off"></label><label class="f">모델<input id="s_model" value="${esc(p.model)}"></label></div>
+    <div class="grid2"><label class="f">OpenAI 키<input id="s_okey" value="${esc(p.okey)}" placeholder="sk-…" autocomplete="off"></label><label class="f">모델<input id="s_omodel" value="${esc(p.omodel)}"></label></div>
+    <div class="grid2"><label class="f">Gemini 키<input id="s_gmkey" value="${esc(p.gmkey)}" placeholder="AIza…" autocomplete="off"></label><label class="f">모델<input id="s_gmodel" value="${esc(p.gmodel)}"></label></div>
+    <label class="f">OpenAI 호환 주소 (OpenRouter·Groq·로컬 서버 등)<input id="s_curl" value="${esc(p.curl)}" placeholder="https://openrouter.ai/api/v1"></label>
+    <div class="grid2"><label class="f">호환 API 키<input id="s_ckey" value="${esc(p.ckey)}" autocomplete="off"></label><label class="f">모델<input id="s_cmodel" value="${esc(p.cmodel)}"></label></div>
+    <button class="btn line" id="s_test">연결 테스트</button><div class="src" id="s_testres"></div>
     <label class="f">요청을 받을 GitHub 저장소<input id="s_repo" value="${esc(p.repo)}"></label>
     <label class="f">GitHub 토큰 — 있으면 앱 안에서 바로 요청 접수 (Issues 쓰기 권한만)<input id="s_gh" value="${esc(p.ghToken)}" placeholder="github_pat_…" autocomplete="off"></label>
     <div class="src">키는 이 폰 안에만 저장되고 각 서비스로만 보내져요.</div>
     <button class="btn pri" id="s_save">저장</button>
    </div>
+   <button class="btn line" id="s_trip">여행 정보 수정 (목적·기간·도시·취향)</button>
+   <div class="grid2"><button class="btn line" id="s_imp">계획 가져오기 (md/txt)</button><button class="btn line" id="s_notes">데이터·md 내보내기</button></div>
    <div class="card" style="display:flex;flex-direction:column;gap:8px"><b>백업</b><div class="grid2"><button class="btn" id="s_exp">내보내기</button><button class="btn" id="s_imp">가져오기</button></div></div>
    <div class="src">앱 ${esc(info.versionName)} · 화면 build ${info.webBuild}</div>`);
+  const readAI = () => { const g = (id) => $('#' + id, sh).value.trim(); p.gkey = g('s_gkey'); p.akey = g('s_akey'); p.model = g('s_model') || DEF.prefs.model; p.okey = g('s_okey'); p.omodel = g('s_omodel') || DEF.prefs.omodel; p.gmkey = g('s_gmkey'); p.gmodel = g('s_gmodel') || DEF.prefs.gmodel; p.curl = g('s_curl'); p.ckey = g('s_ckey'); p.cmodel = g('s_cmodel'); p.aiFirst = g('s_first'); };
+  $('#s_test', sh).onclick = async () => {
+    readAI(); save(); const el = $('#s_testres', sh); const ks = Object.keys(AIS).filter((k) => AIS[k].has(p));
+    if (!ks.length) { el.textContent = '키가 하나도 없어요'; return; }
+    el.textContent = '테스트 중…';
+    const lines = [];
+    for (const k of ks) { const t0 = performance.now(); try { const o = await claude('"연결됨"이라고만 답해.', { only: k, test: true }); lines.push(`✓ ${AIS[k].name} ${((performance.now() - t0) / 1000).toFixed(1)}초: ${o.slice(0, 30)}`); } catch (e) { lines.push(`✗ ${AIS[k].name}: ${e.message.slice(0, 140)}`); } el.innerText = lines.join('\n'); }
+  };
+  $('#s_trip', sh).onclick = () => { sh.remove(); tripSheet(false); };
+  $('#s_imp', sh).onclick = () => { sh.remove(); importSheet(false); };
+  $('#s_notes', sh).onclick = () => { sh.remove(); notesView(); };
   $('#s_tts', sh).onclick = (e) => { p.tts = !p.tts; e.currentTarget.setAttribute('aria-pressed', p.tts); save(); };
   $('#s_save', sh).onclick = () => {
-    p.gkey = $('#s_gkey', sh).value.trim(); p.akey = $('#s_akey', sh).value.trim(); p.model = $('#s_model', sh).value.trim() || DEF.prefs.model;
+    readAI();
     p.repo = $('#s_repo', sh).value.trim() || DEF.prefs.repo; p.ghToken = $('#s_gh', sh).value.trim(); p.ccOverride = $('#s_cc', sh).value;
     S.cc = null; save(); whereAmI(); toast('저장했어요'); sh.remove(); render();
   };
@@ -717,18 +1015,58 @@ function settingsSheet() {
 }
 
 /* ---------------- Claude (선택, 느린 경로) ---------------- */
+/* 외부 AI API: Anthropic(Claude) · OpenAI · Google Gemini · OpenAI 호환(OpenRouter, Groq, 로컬 등).
+   우선 순위 AI가 실패하면 키가 있는 다음 AI로 자동으로 넘어간다. */
+const AIS = {
+  anthropic: { name: 'Claude', has: (p) => p.akey },
+  openai: { name: 'OpenAI', has: (p) => p.okey },
+  gemini: { name: 'Gemini', has: (p) => p.gmkey },
+  custom: { name: '호환 API', has: (p) => p.curl && p.cmodel },
+};
+function hasAI() { return Object.values(AIS).some((a) => a.has(DB.prefs)); }
+function aiOrder() { const p = DB.prefs; return [p.aiFirst, ...Object.keys(AIS)].filter((k, i, a) => AIS[k] && a.indexOf(k) === i && AIS[k].has(p)); }
+async function callAI(kind, sys, user, opt) {
+  const p = DB.prefs; const max = opt.json ? 2000 : 700;
+  if (kind === 'anthropic') {
+    const body = { model: p.model || 'claude-haiku-5-5', max_tokens: max, system: sys, messages: [{ role: 'user', content: user }] };
+    const call = (b) => fetchJSON('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': p.akey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(b) }, 45000);
+    let j;
+    if (!opt.json && !opt.test) { try { j = await call(Object.assign({}, body, { tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }] })); } catch (e) { j = null; } }
+    if (!j) j = await call(body);
+    return (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('').trim();
+  }
+  if (kind === 'openai' || kind === 'custom') {
+    const url = kind === 'openai' ? 'https://api.openai.com/v1/chat/completions' : p.curl.replace(/\/+$/, '') + (/\/chat\/completions$/.test(p.curl) ? '' : '/chat/completions');
+    const h = { 'Content-Type': 'application/json' }; const key = kind === 'openai' ? p.okey : p.ckey; if (key) h.Authorization = 'Bearer ' + key;
+    const j = await fetchJSON(url, { method: 'POST', headers: h, body: JSON.stringify({ model: kind === 'openai' ? p.omodel || 'gpt-4o-mini' : p.cmodel, max_tokens: max, messages: [{ role: 'system', content: sys }, { role: 'user', content: user }] }) }, 45000);
+    return ((j.choices || [])[0] || {}).message.content.trim();
+  }
+  if (kind === 'gemini') {
+    const m = p.gmodel || 'gemini-2.5-flash';
+    const body = { systemInstruction: { parts: [{ text: sys }] }, contents: [{ role: 'user', parts: [{ text: user }] }], generationConfig: { maxOutputTokens: max } };
+    if (!opt.json && !opt.test) body.tools = [{ google_search: {} }];
+    let j;
+    try { j = await fetchJSON(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent?key=${encodeURIComponent(p.gmkey)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, 45000); }
+    catch (e) { if (!body.tools) throw e; delete body.tools; j = await fetchJSON(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent?key=${encodeURIComponent(p.gmkey)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, 45000); }
+    return (((j.candidates || [])[0] || {}).content || { parts: [] }).parts.map((x) => x.text || '').join('').trim();
+  }
+  throw new Error('알 수 없는 AI');
+}
+let lastAI = '';
 async function claude(prompt, opt) {
   opt = opt || {};
-  if (!DB.prefs.akey) throw new Error('설정에 Anthropic API 키가 없어요');
+  const order = opt.only ? [opt.only] : aiOrder();
+  if (!order.length) throw new Error('설정에 AI API 키가 없어요');
   const { cur, next } = nowLeg();
-  const ctx = `현지 시각 ${new Date().toLocaleString('ko-KR')} (한국 ${seoul.format(new Date())}). 위치: ${S.city || '?'}, ${P.countryName(S.cc)}${DB.lastFix ? ` (${DB.lastFix.lat.toFixed(4)}, ${DB.lastFix.lon.toFixed(4)})` : ''}. 지금 이동: ${cur ? JSON.stringify({ no: cur.no, from: cur.from, to: cur.to, arr: cur.arr }) : '없음'}. 다음 일정: ${next ? JSON.stringify({ no: next.no, from: next.from, dep: next.dep, plat: next.depPlat }) : '없음'}.`;
+  const ctx = `현지 시각 ${new Date().toLocaleString('ko-KR')} (한국 ${seoul.format(new Date())}). 위치: ${S.city || '?'}, ${P.countryName(S.cc)}${DB.lastFix ? ` (${DB.lastFix.lat.toFixed(4)}, ${DB.lastFix.lon.toFixed(4)})` : ''}. 지금 이동: ${cur ? JSON.stringify({ no: cur.no, from: cur.from, to: cur.to, arr: cur.arr }) : '없음'}. 다음 일정: ${next ? JSON.stringify({ no: next.no, from: next.from, dep: next.dep, plat: next.depPlat }) : '없음'}. ${tripCtx()}`;
   const sys = '너는 여행 중인 사용자의 비서다. 한국어로 3~5문장, 결론과 숫자를 먼저 말한다. 확인하지 못한 스펙(와이파이, 샤워, 운행 여부 등)은 단정하지 말고 "확인 필요"라고 한다. 현지 시각을 고려한다. 할 수 없는 일(깨워주기, 결제 등)은 약속하지 않는다. 웹 검색을 했다면 출처 이름을 짧게 붙인다.';
-  const body = { model: DB.prefs.model, max_tokens: opt.json ? 2000 : 700, system: sys, messages: [{ role: 'user', content: (opt.json ? '' : ctx + '\n\n') + prompt }] };
-  const call = (b) => fetchJSON('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': DB.prefs.akey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(b) }, 45000);
-  let j;
-  if (!opt.json) { try { j = await call(Object.assign({}, body, { tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }] })); } catch (e) { j = null; } }
-  if (!j) j = await call(body);
-  return (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('').trim();
+  const user = (opt.json || opt.test ? '' : ctx + '\n\n') + prompt;
+  const errs = [];
+  for (const k of order) {
+    try { const out = await callAI(k, sys, user, opt); if (out) { lastAI = AIS[k].name; return out; } errs.push(AIS[k].name + ': 빈 답'); }
+    catch (e) { errs.push(AIS[k].name + ': ' + String(e.message).slice(0, 120)); }
+  }
+  throw new Error(errs.join(' / '));
 }
 
 /* ---------------- 라우터 (LLM 없음) ---------------- */
@@ -822,18 +1160,18 @@ async function answer(text, r, viaVoice) {
     return;
   }
   // 느린 경로
-  if (!DB.prefs.akey) {
-    voiceUI('answer', text, `<div class="ans"><div class="spoken">버튼 기능으로는 처리 못 하는 말이에요.</div><div class="src">설정에 Anthropic 키를 넣으면 Claude가 답해요. 지금은 아래로 바로 찾을 수 있어요.</div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn pri sm" data-open="https://www.google.com/search?q=${encodeURIComponent(text)}">구글 검색</button><button class="btn sm" data-mapsearch="${esc(text)}">지도에서 찾기</button><button class="btn line sm" data-req="${esc(text)}">이 기능 만들어 달라고 요청</button></div></div>`);
+  if (!hasAI()) {
+    voiceUI('answer', text, `<div class="ans"><div class="spoken">버튼 기능으로는 처리 못 하는 말이에요.</div><div class="src">설정에 AI API 키(Claude·OpenAI·Gemini 등)를 넣으면 AI가 답해요. 지금은 아래로 바로 찾을 수 있어요.</div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn pri sm" data-open="https://www.google.com/search?q=${encodeURIComponent(text)}">구글 검색</button><button class="btn sm" data-mapsearch="${esc(text)}">지도에서 찾기</button><button class="btn line sm" data-req="${esc(text)}">이 기능 만들어 달라고 요청</button></div></div>`);
     return;
   }
-  voiceUI('think', text, '<span class="route">Agent 경로 · Claude · 수 초</span>');
+  voiceUI('think', text, '<span class="route">Agent 경로 · AI · 수 초</span>');
   try {
     const out = await claude(text);
     if (!vEl) return;
-    voiceUI('answer', text, `<span class="route">Agent 경로 · ${((performance.now() - t0) / 1000).toFixed(1)}초</span><div class="ans"><div class="spoken">${esc(out)}</div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn line sm" data-req="${esc(text)}">자주 묻는 거면 버튼으로 만들어 달라고 요청</button></div></div>`);
+    voiceUI('answer', text, `<span class="route">Agent 경로 · ${esc(lastAI)} · ${((performance.now() - t0) / 1000).toFixed(1)}초</span><div class="ans"><div class="spoken">${esc(out)}</div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn line sm" data-req="${esc(text)}">자주 묻는 거면 버튼으로 만들어 달라고 요청</button></div></div>`);
     speak(out.replace(/\[[^\]]*\]\([^)]*\)/g, '').slice(0, 400));
   } catch (e) {
-    voiceUI('answer', text, `<div class="ans"><div class="spoken">Claude 호출 실패</div><div class="src">${esc(e.message)}</div><button class="btn pri sm" data-open="https://www.google.com/search?q=${encodeURIComponent(text)}">구글 검색</button></div>`);
+    voiceUI('answer', text, `<div class="ans"><div class="spoken">AI 호출 실패</div><div class="src">${esc(e.message)}</div><button class="btn pri sm" data-open="https://www.google.com/search?q=${encodeURIComponent(text)}">구글 검색</button></div>`);
   }
 }
 
@@ -886,6 +1224,9 @@ function bind(root) {
   $$('[data-xfer]', root).forEach((b) => (b.onclick = () => { S.xfer = b.dataset.xfer; go('xfer'); }));
   $$('[data-alarm]', root).forEach((b) => (b.onclick = () => { const l = DB.legs.find((x) => x.id === b.dataset.alarm); if (l) { setAlarm(l, !l.alarm); render(); } }));
   $$('[data-addleg]', root).forEach((b) => (b.onclick = () => legForm()));
+  $$('[data-trip]', root).forEach((b) => (b.onclick = () => tripSheet(false)));
+  $$('[data-import]', root).forEach((b) => (b.onclick = () => importSheet(false)));
+  $$('[data-notes]', root).forEach((b) => (b.onclick = () => notesView()));
   $$('[data-editleg]', root).forEach((b) => (b.onclick = () => legForm(DB.legs.find((x) => x.id === b.dataset.editleg))));
   $$('[data-open]', root).forEach((b) => (b.onclick = (e) => { e.preventDefault(); open(b.dataset.open); }));
   $$('[data-mapsearch]', root).forEach((b) => (b.onclick = () => { const pk = P.map(S.cc); openMap(pk.search(b.dataset.mapsearch), P.google.search(b.dataset.mapsearch)); }));
@@ -924,6 +1265,8 @@ window.onAppResume = () => { header(); research(false); syncReqs(); if (S.view =
 // 시작
 setInterval(header, 30000);
 whereAmI(); render(); watch();
+if (!DB.trip) setTimeout(() => importSheet(true), 300);
+if (A && A.takeImport) { const tx = A.takeImport(); if (tx) setTimeout(() => window.onImportText(tx), 400); }
 locate(120000).then(async (f) => { if (f) { S.here = f; await whereAmI(); } research(false); });
 syncReqs();
 })();

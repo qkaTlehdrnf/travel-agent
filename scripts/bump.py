@@ -30,6 +30,6 @@ if '--apk' in sys.argv:
     m = re.sub(r'versionName="[^"]+"', f'versionName="{name}"', m)
     open(mp, 'w', encoding='utf-8').write(m)
     v['apk'] = {'versionCode': code, 'versionName': name, 'note': v['note'],
-                'url': 'https://github.com/qkaTlehdrnf/travel-agent/releases/latest/download/travel-agent.apk'}
+                'url': ''}
 json.dump(v, open(vp, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
 print('build', v['build'], 'apk', v.get('apk', {}).get('versionCode'))

@@ -64,6 +64,8 @@ public class MainActivity extends Activity {
     SpeechRecognizer sr;
     final Handler ui = new Handler(Looper.getMainLooper());
     volatile boolean updating = false;
+    ValueCallback<Uri[]> fileCb;
+    volatile String pendingImport = null;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -95,6 +97,17 @@ public class MainActivity extends Activity {
             @Override
             public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback cb) {
                 cb.invoke(origin, true, true);
+            }
+
+            @Override
+            public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams p) {
+                if (fileCb != null) fileCb.onReceiveValue(null);
+                fileCb = cb;
+                Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+                i.addCategory(Intent.CATEGORY_OPENABLE);
+                i.setType("*/*");
+                try { startActivityForResult(Intent.createChooser(i, "파일 선택"), 7); } catch (Exception e) { fileCb = null; return false; }
+                return true;
             }
         });
         web.setWebViewClient(new WebViewClient() {
@@ -132,6 +145,40 @@ public class MainActivity extends Activity {
             }
         });
         checkUpdate(false);
+        takeShared(getIntent());
+    }
+
+    @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        if (req == 7 && fileCb != null) {
+            fileCb.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(res, data));
+            fileCb = null;
+            return;
+        }
+        super.onActivityResult(req, res, data);
+    }
+
+    @Override
+    protected void onNewIntent(Intent i) {
+        super.onNewIntent(i);
+        if (takeShared(i)) js("window.onImportText&&onImportText(" + JSONObject.quote(pendingImport) + ")");
+    }
+
+    /** 다른 앱(노션·메모·파일)에서 '공유 → 여행 Agent' 또는 md/txt 파일 열기 */
+    boolean takeShared(Intent i) {
+        if (i == null) return false;
+        try {
+            String a = i.getAction(); String text = null;
+            if (Intent.ACTION_SEND.equals(a)) {
+                text = i.getStringExtra(Intent.EXTRA_TEXT);
+                Uri u = i.getParcelableExtra(Intent.EXTRA_STREAM);
+                if (text == null && u != null) text = new String(readAll(getContentResolver().openInputStream(u)), "UTF-8");
+            } else if (Intent.ACTION_VIEW.equals(a) && i.getData() != null && !"https".equals(i.getData().getScheme())) {
+                text = new String(readAll(getContentResolver().openInputStream(i.getData())), "UTF-8");
+            }
+            if (text != null && text.trim().length() > 0) { pendingImport = text; i.setAction(Intent.ACTION_MAIN); return true; }
+        } catch (Exception e) { }
+        return false;
     }
 
     @Override
@@ -310,6 +357,9 @@ public class MainActivity extends Activity {
                 return o.toString();
             } catch (Exception e) { return "{}"; }
         }
+
+        @JavascriptInterface
+        public String takeImport() { String t = pendingImport; pendingImport = null; return t; }
 
         @JavascriptInterface
         public void checkUpdate() { MainActivity.this.checkUpdate(true); }

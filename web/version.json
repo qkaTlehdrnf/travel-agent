@@ -1,6 +1,6 @@
 {
- "build": 1,
- "note": "첫 버전",
+ "build": 2,
+ "note": "여행 계획 md/txt 가져오기·자유 메모·md 내보내기, 외부 AI API(Claude·OpenAI·Gemini·호환) 연결",
  "files": [
   "app.js",
   "index.html",
@@ -15,8 +15,9 @@
   "style.css"
  ],
  "apk": {
-  "versionCode": 1,
-  "versionName": "0.1.0",
-  "url": "https://github.com/qkaTlehdrnf/travel-agent/releases/latest/download/travel-agent.apk"
+  "versionCode": 2,
+  "versionName": "0.1.1",
+  "note": "Claude 스레드에 올린 APK로 설치해 주세요 (파일 가져오기·공유 기능)",
+  "url": ""
  }
 }

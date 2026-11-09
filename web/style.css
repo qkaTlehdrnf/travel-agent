@@ -54,7 +54,7 @@ label.f{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--
 .now .cell small{display:block;font-size:10.5px;opacity:.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .now .cell div{font-family:var(--f-data);font-size:16px;font-weight:600}
 .now .row{display:flex;gap:6px;flex-wrap:wrap}
-.btn{border:0;border-radius:10px;padding:9px 12px;font-weight:600;font-size:13.5px;background:var(--surface2);display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.btn{white-space:nowrap;border:0;border-radius:10px;padding:9px 12px;font-weight:600;font-size:13.5px;background:var(--surface2);display:inline-flex;align-items:center;justify-content:center;gap:6px}
 .btn.pri{background:var(--accent);color:var(--accent-ink)}
 .btn.line{background:transparent;border:1px solid var(--line)}
 .btn.bad{background:var(--bad-soft);color:var(--bad)}
